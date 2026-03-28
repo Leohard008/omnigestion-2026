@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ping:*)",
+      "Bash(nslookup:*)",
+      "Bash(taskkill /F /IM node.exe)",
+      "Bash(taskkill /PID 1500 /F)",
+      "Bash(cmd /c \"taskkill /F /IM node.exe\" 2>&1)",
+      "Bash(cmd /c \"taskkill /PID 1500 /F\" 2>&1)",
+      "Bash(cmd /c \"taskkill /F /IM node.exe\")",
+      "Bash(cmd /c \"netstat -ano | findstr :3000\")",
+      "Bash(cmd /c \"netstat -ano | findstr :3001\")",
+      "Bash(cmd /c \"tasklist | findstr node\" 2>&1)",
+      "Bash(powershell -Command \"Remove-Item -Path 'D:\\\\Amir''s workx\\\\claude code\\\\Omni-gestion\\\\.next' -Recurse -Force -ErrorAction SilentlyContinue; Write-Host 'done'\" 2>&1)",
+      "Bash(cmd /c \"wmic process where name='node.exe' get ProcessId,CommandLine 2>nul\")",
+      "Bash(cmd /c \"wmic process where ProcessId=1500 get Name,CommandLine,ProcessId 2>nul\")",
+      "Bash(find \"D:/Amir''''s workx/claude code/Omni-gestion/.next/dev\" -name *.json -o -name *.info -o -name *.lock)",
+      "Bash(find \"D:/Amir''''s workx/claude code/Omni-gestion/.next/dev/cache\" -name *.json)",
+      "Bash(find \"D:/Amir''''s workx/claude code/Omni-gestion/.next/dev\" -name next-server.json -o -name server-reference-manifest*)",
+      "Bash(powershell -Command \"Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue | Select-Object LocalAddress,LocalPort,State,OwningProcess | Format-Table\" 2>&1)",
+      "Bash(powershell -Command \"Get-Process -Id 1500 -ErrorAction SilentlyContinue | Select-Object Id,Name,Path,MainWindowTitle | Format-List\" 2>&1)",
+      "Bash(powershell -Command \"Stop-Process -Id 1500 -Force; Write-Host 'killed'\" 2>&1)",
+      "Bash(powershell -Command \"Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue\" 2>&1)",
+      "Bash(powershell -Command \"Remove-Item -Path 'D:\\\\Amir''s workx\\\\claude code\\\\Omni-gestion\\\\.next' -Recurse -Force; Write-Host 'cache cleared'\" 2>&1)",
+      "Bash(npm install:*)",
+      "Bash(powershell -Command \"Get-Process -Name node -ErrorAction SilentlyContinue | Stop-Process -Force; Write-Host 'stopped'\" 2>&1)"
+    ]
+  }
+}

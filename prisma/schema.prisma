@@ -1,0 +1,323 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ============================================
+// MULTI-TENANT CORE
+// ============================================
+
+model Organization {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  country     String   @default("DZ") // DZ = Algérie, FR = France
+  currency    String   @default("DZD") // DZD ou EUR
+  timezone    String   @default("Africa/Algiers")
+  logo        String?
+  plan        PlanType @default(FREE)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  members     OrganizationMember[]
+  customers   Customer[]
+  products    Product[]
+  invoices    Invoice[]
+  quotes      Quote[]
+  expenses    Expense[]
+  settings    OrganizationSettings?
+
+  @@map("organizations")
+}
+
+model OrganizationSettings {
+  id             String   @id @default(cuid())
+  organizationId String   @unique
+  taxRate        Float    @default(19) // TVA 19% Algérie / 20% France
+  invoicePrefix  String   @default("FAC")
+  quotePrefix    String   @default("DEV")
+  nextInvoiceNum Int      @default(1)
+  nextQuoteNum   Int      @default(1)
+  paymentTerms   Int      @default(30) // jours
+  bankDetails    Json?
+  address        Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("organization_settings")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  password      String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  memberships   OrganizationMember[]
+  accounts      Account[]
+  sessions      Session[]
+
+  @@map("users")
+}
+
+model OrganizationMember {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String
+  role           Role     @default(MEMBER)
+  isActive       Boolean  @default(true)
+  joinedAt       DateTime @default(now())
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@map("organization_members")
+}
+
+// ============================================
+// NEXTAUTH MODELS
+// ============================================
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ============================================
+// COMMERCIAL MODELS
+// ============================================
+
+model Customer {
+  id             String       @id @default(cuid())
+  organizationId String
+  type           CustomerType @default(INDIVIDUAL)
+  name           String
+  email          String?
+  phone          String?
+  address        Json?
+  taxNumber      String?      // NIF (Algérie) ou SIRET (France)
+  nis            String?      // Numéro d'Identification Statistique (Algérie)
+  ai             String?      // Article d'Imposition (Algérie)
+  rc             String?      // Registre du Commerce (Algérie)
+  notes          String?
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoices       Invoice[]
+  quotes         Quote[]
+
+  @@map("customers")
+}
+
+model Product {
+  id             String      @id @default(cuid())
+  organizationId String
+  name           String
+  description    String?
+  price          Float
+  unit           String      @default("unité")
+  taxRate        Float       @default(19)
+  category       String?
+  sku            String?
+  stock          Int?
+  isActive       Boolean     @default(true)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoiceItems   InvoiceItem[]
+  quoteItems     QuoteItem[]
+
+  @@map("products")
+}
+
+model Invoice {
+  id             String        @id @default(cuid())
+  organizationId String
+  customerId     String
+  number         String
+  status         InvoiceStatus @default(DRAFT)
+  issueDate      DateTime      @default(now())
+  dueDate        DateTime?
+  subtotal       Float
+  taxAmount      Float
+  total          Float
+  notes          String?
+  currency       String        @default("DZD")
+  paidAt         DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer       Customer      @relation(fields: [customerId], references: [id])
+  items          InvoiceItem[]
+
+  @@unique([organizationId, number])
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  id          String  @id @default(cuid())
+  invoiceId   String
+  productId   String?
+  description String
+  quantity    Float
+  unitPrice   Float
+  taxRate     Float   @default(19)
+  total       Float
+
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  product     Product? @relation(fields: [productId], references: [id])
+
+  @@map("invoice_items")
+}
+
+model Quote {
+  id             String      @id @default(cuid())
+  organizationId String
+  customerId     String
+  number         String
+  status         QuoteStatus @default(DRAFT)
+  issueDate      DateTime    @default(now())
+  validUntil     DateTime?
+  subtotal       Float
+  taxAmount      Float
+  total          Float
+  notes          String?
+  currency       String      @default("DZD")
+  convertedAt    DateTime?
+  invoiceId      String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer       Customer     @relation(fields: [customerId], references: [id])
+  items          QuoteItem[]
+
+  @@unique([organizationId, number])
+  @@map("quotes")
+}
+
+model QuoteItem {
+  id          String  @id @default(cuid())
+  quoteId     String
+  productId   String?
+  description String
+  quantity    Float
+  unitPrice   Float
+  taxRate     Float   @default(19)
+  total       Float
+
+  quote       Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  product     Product? @relation(fields: [productId], references: [id])
+
+  @@map("quote_items")
+}
+
+model Expense {
+  id             String        @id @default(cuid())
+  organizationId String
+  category       String
+  description    String
+  amount         Float
+  currency       String        @default("DZD")
+  date           DateTime
+  receipt        String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("expenses")
+}
+
+// ============================================
+// ENUMS
+// ============================================
+
+enum PlanType {
+  FREE
+  STARTER
+  PRO
+  ENTERPRISE
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+enum CustomerType {
+  INDIVIDUAL
+  COMPANY
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum QuoteStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}

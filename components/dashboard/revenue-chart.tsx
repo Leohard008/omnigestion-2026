@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart } from "recharts";
 
 interface RevenueChartProps {
@@ -7,14 +7,14 @@ interface RevenueChartProps {
 }
 
 const formatValue = (value: number, currency: string) => {
-  if (currency === "EUR") return `${(value / 1000).toFixed(1)}k€`;
+  if (currency === "EUR") return `${(value / 1000).toFixed(1)}kâ‚¬`;
   return `${(value / 1000).toFixed(0)}k`;
 };
 
 export function RevenueChart({ data, currency }: RevenueChartProps) {
   return (
     <div className="bg-white rounded-xl border shadow-sm p-6">
-      <h2 className="font-semibold text-slate-900 mb-4">Évolution du chiffre d&apos;affaires</h2>
+      <h2 className="font-semibold text-slate-900 mb-4">Ã‰volution du chiffre d&apos;affaires</h2>
       <ResponsiveContainer width="100%" height={200}>
         <AreaChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
           <defs>
@@ -36,3 +36,4 @@ export function RevenueChart({ data, currency }: RevenueChartProps) {
     </div>
   );
 }
+

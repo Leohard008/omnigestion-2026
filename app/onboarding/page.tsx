@@ -1,5 +1,5 @@
-ï»¿import { redirect } from "next/navigation";
-import { getServerSession } from "next-auth";
+import { redirect } from "next/navigation";
+import { getServerSession } from "next-auth/next";
 
 export default async function OnboardingPage() {
   const session = await getServerSession();
@@ -9,8 +9,8 @@ export default async function OnboardingPage() {
     redirect("/auth/login");
   }
   
-  // Si l'utilisateur a dÃ©jÃ  une organisation, aller au dashboard
-  // TODO: VÃ©rifier si l'utilisateur a une organisation
+  // Si l'utilisateur a déjà une organisation, aller au dashboard
+  // TODO: Vérifier si l'utilisateur a une organisation
   
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -20,7 +20,7 @@ export default async function OnboardingPage() {
             Bienvenue sur OmniGestion !
           </h2>
           <p className="mt-2 text-gray-600">
-            CrÃ©ez votre premiÃ¨re organisation pour commencer
+            Créez votre première organisation pour commencer
           </p>
         </div>
         
@@ -43,13 +43,13 @@ export default async function OnboardingPage() {
             type="submit"
             className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
           >
-            CrÃ©er mon organisation
+            Créer mon organisation
           </button>
         </form>
         
         <div className="text-center">
           <a href="/dashboard" className="text-sm text-blue-600 hover:text-blue-500">
-            Ignorer et aller au dashboard â†’
+            Ignorer et aller au dashboard ?
           </a>
         </div>
       </div>

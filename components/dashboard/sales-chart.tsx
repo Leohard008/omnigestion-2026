@@ -21,7 +21,7 @@ export function SalesChart({ data, currency }: SalesChartProps) {
           <XAxis dataKey="month" tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
           <YAxis tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} tickFormatter={(v) => formatValue(v, currency)} />
           <Tooltip
-            formatter={(value: number, name: string) => [formatValue(value, currency), name === "ventes" ? "Ventes" : "Dépenses"]}
+            formatter={(value, name) => [formatValue(Number(value ?? 0), currency), name === "ventes" ? "Ventes" : "Dépenses"]}
             contentStyle={{ borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "12px" }}
           />
           <Legend formatter={(value) => value === "ventes" ? "Ventes" : "Dépenses"} />

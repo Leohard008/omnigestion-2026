@@ -34,7 +34,7 @@ export function TopClientsChart({ data, currency }: TopClientsChartProps) {
             ))}
           </Pie>
           <Tooltip
-            formatter={(value: number, name: string) => [formatValue(value), name]}
+            formatter={(value, name) => [formatValue(Number(value ?? 0)), String(name)]}
             contentStyle={{ borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "12px" }}
           />
           <Legend iconType="circle" iconSize={8} formatter={(value) => <span className="text-xs text-slate-600">{value}</span>} />

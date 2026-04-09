@@ -17,7 +17,7 @@ export default function DashboardError({
   return (
     <div className="flex items-center justify-center min-h-[400px]">
       <div className="text-center space-y-4">
-        <AlertCircle className="h-12 w-12 text-red-400 mx-auto" />
+        <AlertCircle className="h-12 w-12 text-red-500 mx-auto" aria-hidden="true" />
         <h2 className="text-xl font-semibold text-slate-900">Erreur de chargement</h2>
         <p className="text-slate-500 text-sm max-w-sm">
           {error.message || "Impossible de charger cette page."}

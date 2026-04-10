@@ -67,7 +67,9 @@ model Tenant {
   currency  String   // "DZD" | "EUR"
   plan      PlanType @default(FREE)
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
+  settings        TenantSettings?
   users           User[]
   locations       Location[]
   suppliers       Supplier[]
@@ -82,20 +84,36 @@ model Tenant {
   @@map("tenants")
 }
 
+// Compteurs de numérotation — mis à jour en transaction pour éviter les doublons
+model TenantSettings {
+  id        String @id @default(cuid())
+  tenantId  String @unique
+  nextPONum Int    @default(1)
+  nextSONum Int    @default(1)
+  poPrefix  String @default("PO")
+  soPrefix  String @default("SO")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@map("tenant_settings")
+}
+
 model User {
-  id        String   @id @default(cuid())
-  tenantId  String
-  email     String   @unique
-  name      String
-  role      UserRole @default(WAREHOUSE_STAFF)
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
+  id          String   @id @default(cuid())
+  tenantId    String
+  supabaseId  String   @unique  // Lien vers auth.users de Supabase
+  email       String
+  name        String
+  role        UserRole @default(WAREHOUSE_STAFF)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
 
   tenant         Tenant          @relation(fields: [tenantId], references: [id])
   stockMovements StockMovement[]
   salesOrders    SalesOrder[]
   purchaseOrders PurchaseOrder[]
 
+  @@unique([tenantId, email])  // Email unique par tenant, pas globalement
   @@map("users")
 }
 
@@ -113,6 +131,7 @@ model Category {
   tenant   Tenant    @relation(fields: [tenantId], references: [id])
   products Product[]
 
+  @@unique([tenantId, name])  // Pas de doublon de catégorie par tenant
   @@map("categories")
 }
 
@@ -192,6 +211,9 @@ model Location {
   inventoryLevels InventoryLevel[]
   movementsFrom   StockMovement[]  @relation("FromLocation")
   movementsTo     StockMovement[]  @relation("ToLocation")
+  purchaseOrders  PurchaseOrder[]
+  salesItems      SalesOrderItem[]
+  alerts          Alert[]
 
   @@map("locations")
 }
@@ -219,12 +241,12 @@ model StockMovement {
   id             String       @id @default(cuid())
   tenantId       String
   productId      String
-  fromLocationId String?
-  toLocationId   String?
-  quantity       Int
+  fromLocationId String?      // null = entrée externe (réception fournisseur)
+  toLocationId   String?      // null = sortie externe (expédition client, perte)
+  quantity       Int          // TOUJOURS POSITIF — direction déterminée par from/to + type
   type           MovementType
   referenceId    String?
-  referenceType  String?
+  referenceType  String?      // "purchase_order" | "sales_order" | "adjustment"
   note           String?
   createdById    String
   createdAt      DateTime     @default(now())
@@ -238,6 +260,11 @@ model StockMovement {
   @@map("stock_movements")
 }
 
+// Direction d'un mouvement :
+// RECEIVE   → from=null,  to=entrepôt  → InventoryLevel[to] += quantity
+// SHIP      → from=entrepôt, to=null   → InventoryLevel[from] -= quantity
+// TRANSFER  → from=A, to=B             → InventoryLevel[A] -= quantity, InventoryLevel[B] += quantity
+// ADJUSTMENT/LOSS → from=entrepôt, to=null → InventoryLevel[from] -= quantity
 enum MovementType { RECEIVE  SHIP  TRANSFER  ADJUSTMENT  LOSS }
 
 // ─── ACHATS ──────────────────────────────────────────
@@ -246,6 +273,7 @@ model PurchaseOrder {
   id          String   @id @default(cuid())
   tenantId    String
   supplierId  String
+  locationId  String   // Entrepôt de destination de la réception
   number      String
   status      POStatus @default(DRAFT)
   expectedAt  DateTime?
@@ -260,6 +288,7 @@ model PurchaseOrder {
 
   tenant    Tenant              @relation(fields: [tenantId], references: [id])
   supplier  Supplier            @relation(fields: [supplierId], references: [id])
+  location  Location            @relation(fields: [locationId], references: [id])
   createdBy User                @relation(fields: [createdById], references: [id])
   items     PurchaseOrderItem[]
 
@@ -336,16 +365,19 @@ model SalesOrderItem {
 // ─── ALERTES ─────────────────────────────────────────
 
 model Alert {
-  id        String    @id @default(cuid())
-  tenantId  String
-  productId String
-  type      AlertType
-  isRead    Boolean   @default(false)
-  createdAt DateTime  @default(now())
+  id         String    @id @default(cuid())
+  tenantId   String
+  productId  String
+  locationId String    // Location concernée par le stock bas
+  type       AlertType
+  isRead     Boolean   @default(false)
+  createdAt  DateTime  @default(now())
 
-  tenant  Tenant  @relation(fields: [tenantId], references: [id])
-  product Product @relation(fields: [productId], references: [id])
+  tenant   Tenant   @relation(fields: [tenantId], references: [id])
+  product  Product  @relation(fields: [productId], references: [id])
+  location Location @relation(fields: [locationId], references: [id])
 
+  @@unique([tenantId, productId, locationId, type])  // Pas de doublon d'alerte par produit/location/type
   @@map("alerts")
 }
 
@@ -364,7 +396,6 @@ enum AlertType { LOW_STOCK  OUT_OF_STOCK }
 
 ### Catalogue
 - CRUD produits (SKU unique, costPrice, sellPrice, barcode, photo, TVA, seuil low stock)
-- Import CSV produits
 - CRUD catégories avec couleur
 - CRUD fournisseurs
 - Association produit ↔ fournisseurs (plusieurs fournisseurs par produit, `isPreferred`)
@@ -464,7 +495,7 @@ Staff ouvre SO ou Scanner PWA
   → Vérification : InventoryLevel.quantity >= quantité demandée
   → Si insuffisant → erreur bloquante (jamais de stock négatif)
   → Transaction DB atomique :
-      1. StockMovement (SHIP, from: location, to: null, qty: -N)
+      1. StockMovement (SHIP, from: location, to: null, qty: N)
       2. InventoryLevel -= N
       3. SalesOrderItem créé avec snapshot unitCost
       4. SalesOrder.status = DELIVERED (vente immédiate)
@@ -557,6 +588,7 @@ stockpilot/
 │   ├── qstash.ts             ← Upstash QStash
 │   ├── utils.ts
 │   └── validators/           ← Schémas Zod par module
+├── middleware.ts              ← Vérifie JWT Supabase + tenantId à chaque requête API
 ├── prisma/
 │   └── schema.prisma
 └── public/
@@ -577,3 +609,4 @@ stockpilot/
 | Multi-devises par transaction | V2 | Complexité comptable |
 | Application mobile native | V2 | PWA suffit pour V1 |
 | Import/export Shopify CSV | V2 | Demande à valider |
+| Import CSV produits | V2 | Validation format + gestion erreurs complexe |

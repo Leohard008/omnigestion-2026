@@ -38,7 +38,14 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const parsed = updateSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Données invalides" }, { status: 400 });
 
-  const updated = await db.team.update({ where: { id }, data: parsed.data });
+  const result = await db.team.updateMany({
+    where: { id, organizationId: ctx.orgId },
+    data: parsed.data,
+  });
+  if (result.count === 0) {
+    return NextResponse.json({ error: "Introuvable" }, { status: 404 });
+  }
+  const updated = await db.team.findUnique({ where: { id } });
   return NextResponse.json(updated);
 }
 
@@ -52,7 +59,7 @@ export async function DELETE(_: Request, { params }: { params: Promise<{ id: str
   if (!team) return NextResponse.json({ error: "Introuvable" }, { status: 404 });
 
   // For MVP: refuse delete if any task still references this team.
-  const tasksCount = await db.task.count({ where: { teamId: id } });
+  const tasksCount = await db.task.count({ where: { teamId: id, organizationId: ctx.orgId } });
   if (tasksCount > 0) {
     return NextResponse.json(
       { error: "Supprimez ou réassignez les tâches avant de supprimer l'équipe" },

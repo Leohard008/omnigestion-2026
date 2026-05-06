@@ -1,11 +1,5 @@
 import type { TaskStatus } from "@prisma/client";
-import type { TenantContext, TaskRef } from "@/lib/tasks/types";
-
-interface SessionRef {
-  userId: string;
-  endedAt: Date | null;
-  editLockedAt: Date | null;
-}
+import type { TenantContext, TaskRef, SessionRef } from "@/lib/tasks/types";
 
 const ALLOWED_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
   TODO: ["IN_PROGRESS", "CANCELLED"],
@@ -43,6 +37,7 @@ export function canCancelTask(ctx: TenantContext, task: TaskRef): boolean {
   return isOwnerOrAdmin(ctx) || isManagerOfTeam(ctx, task.teamId);
 }
 
+// Reassign follows edit rules: OWNER, ADMIN, or MANAGER of the task's team.
 export function canReassignTask(ctx: TenantContext, task: TaskRef): boolean {
   return canEditTask(ctx, task);
 }
@@ -61,6 +56,7 @@ export function canTransitionStatus(
   fromStatus: TaskStatus,
   toStatus: TaskStatus
 ): boolean {
+  if (fromStatus !== task.status) return false;
   if (!sameOrg(ctx, task)) return false;
   if (!ALLOWED_TRANSITIONS[fromStatus].includes(toStatus)) return false;
 

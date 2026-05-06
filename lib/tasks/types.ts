@@ -23,6 +23,16 @@ export interface TaskRef {
   completedAt?: Date | null;
 }
 
+/**
+ * Shape of a TimerSession used by permission checks.
+ * Imported by lib/tasks/permissions.ts and lib/tasks/timer.ts.
+ */
+export interface SessionRef {
+  userId: string;
+  endedAt: Date | null;
+  editLockedAt: Date | null;
+}
+
 export interface MemberMetrics {
   userId: string;
   cycleTimeMedianSec: number | null;

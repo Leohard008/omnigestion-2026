@@ -11,8 +11,9 @@ import {
   canViewMemberMetrics,
   canManageTeam,
   canManageTeamMembers,
+  canViewTeamDashboard,
 } from "@/lib/tasks/permissions";
-import type { TenantContext, TaskRef } from "@/lib/tasks/types";
+import type { TenantContext, TaskRef, SessionRef } from "@/lib/tasks/types";
 
 const ownerCtx: TenantContext = {
   userId: "owner1", orgId: "org1", orgRole: "OWNER",
@@ -33,6 +34,10 @@ const memberCtx: TenantContext = {
 const otherTeamMgr: TenantContext = {
   userId: "mgr2", orgId: "org1", orgRole: "MEMBER",
   teamRoles: new Map([["t2", "MANAGER"]]),
+};
+const viewerCtx: TenantContext = {
+  userId: "viewer1", orgId: "org1", orgRole: "VIEWER",
+  teamRoles: new Map(),
 };
 
 const baseTask: TaskRef = {
@@ -62,6 +67,16 @@ describe("canDeleteTask", () => {
     expect(canDeleteTask(adminCtx, baseTask)).toBe(true);
     expect(canDeleteTask(managerCtx, baseTask)).toBe(false);
     expect(canDeleteTask(memberCtx, baseTask)).toBe(false);
+  });
+  it("denies VIEWER", () => {
+    expect(canDeleteTask(viewerCtx, baseTask)).toBe(false);
+  });
+  it("denies cross-org access", () => {
+    const crossOrg: TenantContext = {
+      userId: "x", orgId: "org2", orgRole: "OWNER",
+      teamRoles: new Map(),
+    };
+    expect(canDeleteTask(crossOrg, baseTask)).toBe(false);
   });
 });
 
@@ -146,30 +161,38 @@ describe("canViewTask", () => {
 });
 
 describe("canEditTimerSession", () => {
-  const session = {
+  const session: SessionRef = {
     userId: "mem1",
     endedAt: new Date(Date.now() - 1000 * 60 * 60),
     editLockedAt: new Date(Date.now() + 1000 * 60 * 60 * 23),
   };
   it("allows assignee within 24h window", () => {
-    expect(canEditTimerSession(memberCtx, session as any, baseTask)).toBe(true);
+    expect(canEditTimerSession(memberCtx, session, baseTask)).toBe(true);
   });
   it("denies assignee after 24h window", () => {
     const expired = { ...session, editLockedAt: new Date(Date.now() - 1000) };
-    expect(canEditTimerSession(memberCtx, expired as any, baseTask)).toBe(false);
+    expect(canEditTimerSession(memberCtx, expired, baseTask)).toBe(false);
   });
   it("allows manager of team regardless of window", () => {
     const expired = { ...session, editLockedAt: new Date(Date.now() - 1000) };
-    expect(canEditTimerSession(managerCtx, expired as any, baseTask)).toBe(true);
+    expect(canEditTimerSession(managerCtx, expired, baseTask)).toBe(true);
   });
   it("denies manager of a different team", () => {
     const expired = { ...session, editLockedAt: new Date(Date.now() - 1000) };
-    expect(canEditTimerSession(otherTeamMgr, expired as any, baseTask)).toBe(false);
+    expect(canEditTimerSession(otherTeamMgr, expired, baseTask)).toBe(false);
   });
   it("allows owner/admin regardless of window", () => {
     const expired = { ...session, editLockedAt: new Date(Date.now() - 1000) };
-    expect(canEditTimerSession(ownerCtx, expired as any, baseTask)).toBe(true);
-    expect(canEditTimerSession(adminCtx, expired as any, baseTask)).toBe(true);
+    expect(canEditTimerSession(ownerCtx, expired, baseTask)).toBe(true);
+    expect(canEditTimerSession(adminCtx, expired, baseTask)).toBe(true);
+  });
+  it("denies cross-org access", () => {
+    const crossOrg: TenantContext = {
+      userId: "x", orgId: "org2", orgRole: "OWNER",
+      teamRoles: new Map(),
+    };
+    const expired = { ...session, editLockedAt: new Date(Date.now() - 1000) };
+    expect(canEditTimerSession(crossOrg, expired, baseTask)).toBe(false);
   });
 });
 
@@ -195,6 +218,9 @@ describe("canManageTeam", () => {
     expect(canManageTeam(adminCtx)).toBe(true);
     expect(canManageTeam(managerCtx)).toBe(false);
   });
+  it("denies VIEWER", () => {
+    expect(canManageTeam(viewerCtx)).toBe(false);
+  });
 });
 
 describe("canManageTeamMembers", () => {
@@ -207,5 +233,21 @@ describe("canManageTeamMembers", () => {
   });
   it("denies MANAGER of a different team", () => {
     expect(canManageTeamMembers(otherTeamMgr, "t1")).toBe(false);
+  });
+});
+
+describe("canViewTeamDashboard", () => {
+  it("allows OWNER and ADMIN", () => {
+    expect(canViewTeamDashboard(ownerCtx, "t1")).toBe(true);
+    expect(canViewTeamDashboard(adminCtx, "t1")).toBe(true);
+  });
+  it("allows MANAGER of that team", () => {
+    expect(canViewTeamDashboard(managerCtx, "t1")).toBe(true);
+  });
+  it("denies MANAGER of a different team", () => {
+    expect(canViewTeamDashboard(otherTeamMgr, "t1")).toBe(false);
+  });
+  it("denies plain MEMBER", () => {
+    expect(canViewTeamDashboard(memberCtx, "t1")).toBe(false);
   });
 });

@@ -326,8 +326,7 @@ git commit -m "chore: add Vitest for unit tests"
 - [ ] **Step 1: Create `lib/tasks/types.ts`**
 
 ```ts
-import type { Role } from "@prisma/client";
-import type { TeamRole, TaskStatus, TaskEventType } from "@prisma/client";
+import type { Role, TeamRole, TaskStatus } from "@prisma/client";
 
 export type Period = "7d" | "30d" | "90d" | "12m";
 
@@ -336,6 +335,20 @@ export interface TenantContext {
   orgId: string;
   orgRole: Role;
   teamRoles: Map<string, TeamRole>; // teamId → role in that team
+}
+
+/**
+ * Shape of a task used by permission checks and transition logic.
+ * Imported by lib/tasks/permissions.ts, lib/tasks/transitions.ts, lib/tasks/timer.ts.
+ */
+export interface TaskRef {
+  id: string;
+  organizationId: string;
+  teamId: string;
+  assigneeId: string;
+  status: TaskStatus;
+  startedAt?: Date | null;
+  completedAt?: Date | null;
 }
 
 export interface MemberMetrics {
@@ -736,16 +749,8 @@ Expected: FAIL — module not found.
 - [ ] **Step 3: Implement `lib/tasks/permissions.ts`**
 
 ```ts
-import type { TaskStatus, TeamRole } from "@prisma/client";
-import type { TenantContext } from "@/lib/tasks/types";
-
-interface TaskRef {
-  id: string;
-  organizationId: string;
-  teamId: string;
-  assigneeId: string;
-  status?: TaskStatus;
-}
+import type { TaskStatus } from "@prisma/client";
+import type { TenantContext, TaskRef } from "@/lib/tasks/types";
 
 interface SessionRef {
   userId: string;
@@ -1216,27 +1221,312 @@ git commit -m "feat(equipe): add team membership management API"
 - Create: `components/equipe/TeamForm.tsx`
 - Create: `components/equipe/TeamMembersList.tsx`
 
-- [ ] **Step 1: Create `app/dashboard/equipe/equipes/page.tsx`** (Server Component, lists teams + form to create)
+- [ ] **Step 1: Create `app/dashboard/equipe/equipes/page.tsx`**
 
-Structure (use existing OmniGestion patterns from `app/dashboard/clients/page.tsx`):
-- Server-side: `requireTenantContext()` + `canManageTeam()` check, redirect to `/dashboard/equipe` if not allowed
-- Fetch teams via `db.team.findMany`
-- Render Card grid + `<TeamForm />` (client component, posts to `/api/equipe/equipes`)
-- Each Card links to `/dashboard/equipe/equipes/[id]`
+```tsx
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import { db } from "@/lib/db";
+import { getTenantContext } from "@/lib/tenant";
+import { canManageTeam } from "@/lib/tasks/permissions";
+import { TeamForm } from "@/components/equipe/TeamForm";
 
-- [ ] **Step 2: Create `components/equipe/TeamForm.tsx`** (Client component)
+export default async function TeamsAdminPage() {
+  const ctx = await getTenantContext();
+  if (!ctx) redirect("/auth/login");
+  if (!canManageTeam(ctx)) redirect("/dashboard/equipe");
 
-Use `react-hook-form` + `zod` (already in stack). Two fields: name (required), description (optional). On success: `router.refresh()`.
+  const teams = await db.team.findMany({
+    where: { organizationId: ctx.orgId },
+    include: { _count: { select: { members: true, tasks: true } } },
+    orderBy: { name: "asc" },
+  });
 
-- [ ] **Step 3: Create `app/dashboard/equipe/equipes/[id]/page.tsx`** (Server Component)
+  return (
+    <div className="space-y-6">
+      <header>
+        <h1 className="text-2xl font-semibold">Équipes</h1>
+        <p className="text-sm text-slate-500">Créer et organiser les équipes de votre organisation.</p>
+      </header>
 
-- Fetch team + members
-- If user not OWNER/ADMIN/MANAGER of the team → redirect
-- Render: edit form (name/desc), member list with role toggle (only OWNER/ADMIN sees toggle), invite member dropdown (lists OrganizationMembers not yet in team), remove button per member
+      <TeamForm />
 
-- [ ] **Step 4: Create `components/equipe/TeamMembersList.tsx`** (Client component)
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        {teams.length === 0 ? (
+          <p className="text-sm text-slate-500">Aucune équipe pour le moment.</p>
+        ) : (
+          teams.map((t) => (
+            <Link
+              key={t.id}
+              href={`/dashboard/equipe/equipes/${t.id}`}
+              className="block rounded-lg border bg-white p-4 hover:border-slate-300"
+            >
+              <div className="font-medium">{t.name}</div>
+              {t.description && <p className="text-sm text-slate-500 mt-1 line-clamp-2">{t.description}</p>}
+              <div className="text-xs text-slate-500 mt-2">
+                {t._count.members} membre(s) · {t._count.tasks} tâche(s)
+              </div>
+            </Link>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+```
 
-Props: `{ teamId: string; members: MemberWithUser[]; canChangeRoles: boolean; }`. Per row: avatar, name, role badge, role select (if `canChangeRoles`), remove button. Confirm dialog on remove.
+- [ ] **Step 2: Create `components/equipe/TeamForm.tsx`**
+
+```tsx
+"use client";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+
+export function TeamForm() {
+  const router = useRouter();
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    const body: Record<string, unknown> = { name };
+    if (description.trim()) body.description = description.trim();
+    const r = await fetch("/api/equipe/equipes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    setBusy(false);
+    if (!r.ok) {
+      const data = await r.json().catch(() => ({}));
+      setError(data.error ?? "Erreur");
+      return;
+    }
+    setName("");
+    setDescription("");
+    router.refresh();
+  }
+
+  return (
+    <form onSubmit={submit} className="rounded border bg-slate-50 p-4 space-y-2">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+        <input
+          className="border rounded px-2 py-1 text-sm"
+          placeholder="Nom de l'équipe"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          required
+          minLength={2}
+          maxLength={80}
+        />
+        <input
+          className="border rounded px-2 py-1 text-sm md:col-span-2"
+          placeholder="Description (optionnel)"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          maxLength={500}
+        />
+      </div>
+      {error && <p className="text-sm text-red-600">{error}</p>}
+      <div className="flex justify-end">
+        <Button type="submit" size="sm" disabled={busy}>{busy ? "Création…" : "+ Créer une équipe"}</Button>
+      </div>
+    </form>
+  );
+}
+```
+
+- [ ] **Step 3: Create `app/dashboard/equipe/equipes/[id]/page.tsx`**
+
+```tsx
+import { notFound, redirect } from "next/navigation";
+import { db } from "@/lib/db";
+import { getTenantContext } from "@/lib/tenant";
+import { canManageTeam, canManageTeamMembers } from "@/lib/tasks/permissions";
+import { TeamMembersList } from "@/components/equipe/TeamMembersList";
+
+export default async function TeamDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const ctx = await getTenantContext();
+  if (!ctx) redirect("/auth/login");
+  const { id } = await params;
+
+  const team = await db.team.findFirst({
+    where: { id, organizationId: ctx.orgId },
+    include: {
+      members: {
+        include: { user: { select: { id: true, name: true, email: true, image: true } } },
+        orderBy: { joinedAt: "asc" },
+      },
+    },
+  });
+  if (!team) notFound();
+  if (!canManageTeamMembers(ctx, team.id)) redirect("/dashboard/equipe");
+
+  const memberIds = new Set(team.members.map((m) => m.userId));
+  const orgMembers = await db.organizationMember.findMany({
+    where: { organizationId: ctx.orgId, isActive: true, userId: { notIn: Array.from(memberIds) } },
+    include: { user: { select: { id: true, name: true, email: true } } },
+  });
+  const candidateUsers = orgMembers.map((m) => m.user);
+
+  const isAdmin = canManageTeam(ctx);
+
+  return (
+    <div className="space-y-6">
+      <header>
+        <h1 className="text-2xl font-semibold">{team.name}</h1>
+        {team.description && <p className="text-sm text-slate-500 mt-1">{team.description}</p>}
+      </header>
+
+      <section>
+        <h2 className="text-lg font-medium mb-2">Membres ({team.members.length})</h2>
+        <TeamMembersList
+          teamId={team.id}
+          members={team.members.map((m) => ({
+            id: m.id,
+            userId: m.userId,
+            role: m.role,
+            user: m.user,
+          }))}
+          candidateUsers={candidateUsers}
+          canChangeRoles={isAdmin}
+        />
+      </section>
+    </div>
+  );
+}
+```
+
+- [ ] **Step 4: Create `components/equipe/TeamMembersList.tsx`**
+
+```tsx
+"use client";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+
+interface User { id: string; name: string | null; email: string; image?: string | null; }
+interface Member { id: string; userId: string; role: "MANAGER" | "MEMBER"; user: User; }
+
+interface Props {
+  teamId: string;
+  members: Member[];
+  candidateUsers: User[];
+  canChangeRoles: boolean;
+}
+
+export function TeamMembersList({ teamId, members, candidateUsers, canChangeRoles }: Props) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [newUserId, setNewUserId] = useState("");
+  const [newRole, setNewRole] = useState<"MANAGER" | "MEMBER">("MEMBER");
+
+  async function add() {
+    if (!newUserId) return;
+    setBusy(true);
+    const r = await fetch(`/api/equipe/equipes/${teamId}/membres`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: newUserId, role: newRole }),
+    });
+    setBusy(false);
+    if (r.ok) {
+      setNewUserId("");
+      setNewRole("MEMBER");
+      router.refresh();
+    } else {
+      const data = await r.json().catch(() => ({}));
+      alert(data.error ?? "Erreur");
+    }
+  }
+
+  async function changeRole(userId: string, role: "MANAGER" | "MEMBER") {
+    setBusy(true);
+    const r = await fetch(`/api/equipe/equipes/${teamId}/membres/${userId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role }),
+    });
+    setBusy(false);
+    if (r.ok) router.refresh();
+    else alert("Erreur");
+  }
+
+  async function remove(userId: string) {
+    if (!window.confirm("Retirer ce membre de l'équipe ?")) return;
+    setBusy(true);
+    const r = await fetch(`/api/equipe/equipes/${teamId}/membres/${userId}`, { method: "DELETE" });
+    setBusy(false);
+    if (r.ok) router.refresh();
+    else {
+      const data = await r.json().catch(() => ({}));
+      alert(data.error ?? "Erreur");
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <ul className="rounded border bg-white">
+        {members.map((m) => (
+          <li key={m.id} className="flex items-center gap-3 px-3 py-2 border-b last:border-b-0">
+            <div className="flex-1">
+              <div className="text-sm font-medium">{m.user.name ?? m.user.email}</div>
+              <div className="text-xs text-slate-500">{m.user.email}</div>
+            </div>
+            {canChangeRoles ? (
+              <select
+                value={m.role}
+                onChange={(e) => changeRole(m.userId, e.target.value as "MANAGER" | "MEMBER")}
+                className="border rounded px-2 py-1 text-xs"
+                disabled={busy}
+              >
+                <option value="MEMBER">Membre</option>
+                <option value="MANAGER">Manager</option>
+              </select>
+            ) : (
+              <span className="text-xs text-slate-500">{m.role === "MANAGER" ? "Manager" : "Membre"}</span>
+            )}
+            <Button variant="outline" size="sm" onClick={() => remove(m.userId)} disabled={busy}>
+              Retirer
+            </Button>
+          </li>
+        ))}
+      </ul>
+
+      {candidateUsers.length > 0 && (
+        <div className="rounded border bg-slate-50 p-3 flex flex-wrap items-center gap-2">
+          <select
+            value={newUserId}
+            onChange={(e) => setNewUserId(e.target.value)}
+            className="border rounded px-2 py-1 text-sm"
+          >
+            <option value="">Ajouter un membre…</option>
+            {candidateUsers.map((u) => (
+              <option key={u.id} value={u.id}>{u.name ?? u.email}</option>
+            ))}
+          </select>
+          {canChangeRoles && (
+            <select
+              value={newRole}
+              onChange={(e) => setNewRole(e.target.value as "MANAGER" | "MEMBER")}
+              className="border rounded px-2 py-1 text-sm"
+            >
+              <option value="MEMBER">Membre</option>
+              <option value="MANAGER">Manager</option>
+            </select>
+          )}
+          <Button size="sm" onClick={add} disabled={!newUserId || busy}>Ajouter</Button>
+        </div>
+      )}
+    </div>
+  );
+}
+```
 
 - [ ] **Step 5: Manual test**
 
@@ -1433,8 +1723,8 @@ npm test -- transitions
 
 ```ts
 import { db } from "@/lib/db";
-import type { Task, TaskStatus, Prisma } from "@prisma/client";
-import type { TenantContext } from "@/lib/tasks/types";
+import type { TaskStatus, Prisma } from "@prisma/client";
+import type { TenantContext, TaskRef } from "@/lib/tasks/types";
 import { canTransitionStatus } from "@/lib/tasks/permissions";
 import { TIMER_EDIT_WINDOW_HOURS } from "@/lib/tasks/constants";
 
@@ -1445,8 +1735,6 @@ export class TransitionError extends Error {
     this.code = code;
   }
 }
-
-interface TaskRef extends Pick<Task, "id" | "organizationId" | "teamId" | "assigneeId" | "status" | "startedAt" | "completedAt"> {}
 
 export async function transitionStatus(
   ctx: TenantContext,
@@ -2046,9 +2334,7 @@ npm test -- timer
 
 ```ts
 import { db } from "@/lib/db";
-import type { TenantContext } from "@/lib/tasks/types";
-import { canEditTimerSessionAsManager } from "@/lib/tasks/permissions";
-import type { Task, TimerSession } from "@prisma/client";
+import type { TenantContext, TaskRef } from "@/lib/tasks/types";
 
 export class TimerError extends Error {
   code: "FORBIDDEN" | "NOT_FOUND" | "EDIT_WINDOW_EXPIRED" | "INVALID";
@@ -2067,7 +2353,7 @@ interface EditPayload {
 export async function editTimerSession(
   ctx: TenantContext,
   sessionId: string,
-  task: Pick<Task, "id" | "organizationId" | "teamId" | "assigneeId" | "status">,
+  task: TaskRef,
   payload: EditPayload
 ): Promise<void> {
   await db.$transaction(async (tx) => {
@@ -2528,7 +2814,7 @@ export async function computeTeamMetrics(
 export async function detectAnomalies(orgId: string, teamId: string): Promise<AnomalyFlag[]> {
   const flags: AnomalyFlag[] = [];
 
-  // INCONSISTENT_TIMER on DONE tasks of last 7 days
+  // Both rules look at DONE tasks of last 7 days.
   const since = new Date(Date.now() - 7 * 24 * 3600 * 1000);
   const doneTasks = await db.task.findMany({
     where: {
@@ -2538,24 +2824,67 @@ export async function detectAnomalies(orgId: string, teamId: string): Promise<An
     },
     select: { id: true, startedAt: true, completedAt: true, title: true },
   });
-  if (doneTasks.length > 0) {
-    const sums = await db.timerSession.groupBy({
-      by: ["taskId"],
-      where: { taskId: { in: doneTasks.map((t) => t.id) }, endedAt: { not: null } },
-      _sum: { durationSeconds: true },
-    });
-    const map = new Map(sums.map((r) => [r.taskId, r._sum.durationSeconds ?? 0]));
-    for (const t of doneTasks) {
-      if (!t.startedAt || !t.completedAt) continue;
-      const cycleSec = (t.completedAt.getTime() - t.startedAt.getTime()) / 1000;
-      const sum = map.get(t.id) ?? 0;
-      if (cycleSec > 8 * 3600 && sum < 2 * 3600) {
-        flags.push({
-          taskId: t.id,
-          type: "INCONSISTENT_TIMER",
-          message: `Tâche "${t.title}" — temps actif (${Math.round(sum / 3600)}h) très inférieur au cycle (${Math.round(cycleSec / 3600)}h). Session non clôturée ?`,
-        });
+  if (doneTasks.length === 0) return flags;
+
+  const taskIds = doneTasks.map((t) => t.id);
+
+  // Total active session time per task (for INCONSISTENT_TIMER).
+  const sums = await db.timerSession.groupBy({
+    by: ["taskId"],
+    where: { taskId: { in: taskIds }, endedAt: { not: null } },
+    _sum: { durationSeconds: true },
+  });
+  const sessionSumByTask = new Map(sums.map((r) => [r.taskId, r._sum.durationSeconds ?? 0]));
+
+  // Status-change events for those tasks (for EXCESSIVE_BLOCKED_RATIO).
+  const events = await db.taskEvent.findMany({
+    where: { taskId: { in: taskIds }, eventType: "STATUS_CHANGE" },
+    orderBy: { at: "asc" },
+    select: { taskId: true, fromStatus: true, toStatus: true, at: true },
+  });
+  const eventsByTask = new Map<string, typeof events>();
+  for (const e of events) {
+    if (!eventsByTask.has(e.taskId)) eventsByTask.set(e.taskId, []);
+    eventsByTask.get(e.taskId)!.push(e);
+  }
+
+  for (const t of doneTasks) {
+    if (!t.startedAt || !t.completedAt) continue;
+    const cycleSec = (t.completedAt.getTime() - t.startedAt.getTime()) / 1000;
+    if (cycleSec <= 0) continue;
+
+    // Rule 1: INCONSISTENT_TIMER
+    const sum = sessionSumByTask.get(t.id) ?? 0;
+    if (cycleSec > 8 * 3600 && sum < 2 * 3600) {
+      flags.push({
+        taskId: t.id,
+        type: "INCONSISTENT_TIMER",
+        message: `Tâche "${t.title}" — temps actif (${Math.round(sum / 3600)}h) très inférieur au cycle (${Math.round(cycleSec / 3600)}h). Session non clôturée ?`,
+      });
+    }
+
+    // Rule 2: EXCESSIVE_BLOCKED_RATIO — sum time spent in BLOCKED status, ratio > 0.5
+    const taskEvents = eventsByTask.get(t.id) ?? [];
+    let blockedSec = 0;
+    let blockedSince: Date | null = null;
+    for (const e of taskEvents) {
+      if (e.toStatus === "BLOCKED") {
+        blockedSince = e.at;
+      } else if (blockedSince && e.fromStatus === "BLOCKED") {
+        blockedSec += (e.at.getTime() - blockedSince.getTime()) / 1000;
+        blockedSince = null;
       }
+    }
+    // Edge case: task ended while still BLOCKED (shouldn't happen — DONE requires IN_PROGRESS — but guard anyway).
+    if (blockedSince && t.completedAt) {
+      blockedSec += (t.completedAt.getTime() - blockedSince.getTime()) / 1000;
+    }
+    if (blockedSec / cycleSec > 0.5) {
+      flags.push({
+        taskId: t.id,
+        type: "EXCESSIVE_BLOCKED_RATIO",
+        message: `Tâche "${t.title}" — ${Math.round((blockedSec / cycleSec) * 100)}% du cycle passé en BLOCKED. Cause externe à investiguer ?`,
+      });
     }
   }
 
@@ -3530,9 +3859,9 @@ export default async function EquipePage({ searchParams }: { searchParams: Promi
     <div className="space-y-6">
       <header className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Mes tâches</h1>
-        {canCreate && <NewTaskButton />}
+        {canCreate && <NewTaskButton userId={ctx.userId} />}
       </header>
-      <CollabMetrics />
+      <CollabMetrics userId={ctx.userId} />
       <TaskFilters current={status} />
       <div className="space-y-2">
         {tasks.length === 0 ? (
@@ -3612,11 +3941,193 @@ Update the server page to pass `userId={ctx.userId}` to `<CollabMetrics />`.
 
 - [ ] **Step 3: Create `components/equipe/TaskFilters.tsx`** (Client)
 
-Five buttons (Tous + 4 statuts non-CANCELLED). Active button highlighted. On click: `router.push("?status=...")`.
+```tsx
+"use client";
+import { useRouter, usePathname } from "next/navigation";
+
+const FILTERS = [
+  { value: undefined, label: "Tous" },
+  { value: "TODO", label: "À faire" },
+  { value: "IN_PROGRESS", label: "En cours" },
+  { value: "BLOCKED", label: "Bloquées" },
+  { value: "DONE", label: "Terminées" },
+] as const;
+
+export function TaskFilters({ current }: { current?: string }) {
+  const router = useRouter();
+  const pathname = usePathname();
+
+  function setStatus(value?: string) {
+    const url = value ? `${pathname}?status=${value}` : pathname;
+    router.push(url);
+  }
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      {FILTERS.map((f) => {
+        const active = (current ?? undefined) === f.value;
+        return (
+          <button
+            key={f.label}
+            type="button"
+            onClick={() => setStatus(f.value)}
+            className={`text-xs px-3 py-1 rounded ${
+              active ? "bg-slate-900 text-white" : "bg-slate-100 hover:bg-slate-200"
+            }`}
+          >
+            {f.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+```
 
 - [ ] **Step 4: Create `components/equipe/NewTaskButton.tsx`** (Client)
 
-Dialog with form (title, description, teamId via select, assigneeId via select filtered by team, priority, dueDate, estimatedHours). POSTs to `/api/equipe/taches`. On success: `router.refresh()`.
+```tsx
+"use client";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
+} from "@/components/ui/dialog";
+
+interface Team { id: string; name: string; }
+interface Member { id: string; name: string | null; email: string; }
+
+export function NewTaskButton({ userId }: { userId: string }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [members, setMembers] = useState<Member[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const [teamId, setTeamId] = useState("");
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [assigneeId, setAssigneeId] = useState("");
+  const [priority, setPriority] = useState<"LOW" | "MEDIUM" | "HIGH" | "URGENT">("MEDIUM");
+  const [dueDate, setDueDate] = useState("");
+  const [estimatedHours, setEstimatedHours] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    fetch("/api/equipe/equipes")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list) => {
+        setTeams(list);
+        if (list.length && !teamId) setTeamId(list[0].id);
+      });
+  }, [open]);
+
+  useEffect(() => {
+    if (!teamId) {
+      setMembers([]);
+      return;
+    }
+    fetch(`/api/equipe/equipes/${teamId}/membres`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows: { user: Member }[]) => {
+        const ms = rows.map((r) => r.user);
+        setMembers(ms);
+        setAssigneeId((curr) => (ms.find((m) => m.id === curr) ? curr : userId));
+      });
+  }, [teamId, userId]);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    const body: Record<string, unknown> = {
+      teamId, title, assigneeId, priority,
+    };
+    if (description.trim()) body.description = description.trim();
+    if (dueDate) body.dueDate = new Date(dueDate).toISOString();
+    if (estimatedHours) body.estimatedHours = Number(estimatedHours);
+
+    const r = await fetch("/api/equipe/taches", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    setSubmitting(false);
+    if (!r.ok) {
+      const data = await r.json().catch(() => ({}));
+      setError(data.error ?? "Erreur");
+      return;
+    }
+    setOpen(false);
+    setTitle("");
+    setDescription("");
+    setDueDate("");
+    setEstimatedHours("");
+    router.refresh();
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button>+ Nouvelle tâche</Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Nouvelle tâche</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-3">
+          <div>
+            <label className="text-xs">Équipe</label>
+            <select className="w-full border rounded px-2 py-1" value={teamId} onChange={(e) => setTeamId(e.target.value)} required>
+              {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs">Titre</label>
+            <input className="w-full border rounded px-2 py-1" value={title} onChange={(e) => setTitle(e.target.value)} required minLength={1} maxLength={200} />
+          </div>
+          <div>
+            <label className="text-xs">Description (optionnel)</label>
+            <textarea className="w-full border rounded px-2 py-1" rows={3} value={description} onChange={(e) => setDescription(e.target.value)} maxLength={5000} />
+          </div>
+          <div>
+            <label className="text-xs">Assigné</label>
+            <select className="w-full border rounded px-2 py-1" value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} required>
+              {members.map((m) => <option key={m.id} value={m.id}>{m.name ?? m.email}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <label className="text-xs">Priorité</label>
+              <select className="w-full border rounded px-2 py-1" value={priority} onChange={(e) => setPriority(e.target.value as typeof priority)}>
+                <option value="LOW">Basse</option>
+                <option value="MEDIUM">Normale</option>
+                <option value="HIGH">Haute</option>
+                <option value="URGENT">Urgente</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs">Échéance</label>
+              <input type="date" className="w-full border rounded px-2 py-1" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-xs">Estim. (h)</label>
+              <input type="number" min={0.25} step={0.25} className="w-full border rounded px-2 py-1" value={estimatedHours} onChange={(e) => setEstimatedHours(e.target.value)} />
+            </div>
+          </div>
+          {error && <p className="text-sm text-red-600">{error}</p>}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setOpen(false)}>Annuler</Button>
+            <Button type="submit" disabled={submitting}>{submitting ? "Création…" : "Créer"}</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+```
 
 - [ ] **Step 5: Manual smoke test**
 
@@ -3879,11 +4390,293 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
 
 - [ ] **Step 2: Create `components/equipe/TaskActions.tsx`** (Client)
 
-Buttons to start/block/done/cancel + reassign dropdown. Each button calls the corresponding API and `router.refresh()` on success. Show only buttons appropriate to current status + permissions.
+```tsx
+"use client";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import type { TaskStatus } from "@prisma/client";
+
+interface Member { id: string; name: string | null; }
+interface Props {
+  task: {
+    id: string;
+    teamId: string;
+    status: TaskStatus;
+    assigneeId: string;
+  };
+  ctxUserId: string;
+  canEdit: boolean;       // includes manager/admin
+  canDelete: boolean;     // owner/admin only
+}
+
+export function TaskActions({ task, ctxUserId, canEdit, canDelete }: Props) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [members, setMembers] = useState<Member[]>([]);
+  const [reassignTo, setReassignTo] = useState<string>("");
+
+  useEffect(() => {
+    if (!canEdit) return;
+    fetch(`/api/equipe/equipes/${task.teamId}/membres`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows: { user: Member }[]) => setMembers(rows.map((r) => r.user)));
+  }, [canEdit, task.teamId]);
+
+  const isAssignee = task.assigneeId === ctxUserId;
+  const canTransition = isAssignee || canEdit;
+
+  async function transition(toStatus: TaskStatus, askReason = false) {
+    setBusy(true);
+    let reason: string | undefined;
+    if (askReason) {
+      const r = window.prompt("Raison (optionnel) :") ?? undefined;
+      reason = r?.trim() || undefined;
+    }
+    const res = await fetch(`/api/equipe/taches/${task.id}/status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ toStatus, reason }),
+    });
+    setBusy(false);
+    if (res.ok) router.refresh();
+    else {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error ?? "Erreur");
+    }
+  }
+
+  async function reassign() {
+    if (!reassignTo || reassignTo === task.assigneeId) return;
+    setBusy(true);
+    const res = await fetch(`/api/equipe/taches/${task.id}/assign`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ toAssigneeId: reassignTo }),
+    });
+    setBusy(false);
+    if (res.ok) {
+      setReassignTo("");
+      router.refresh();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error ?? "Erreur");
+    }
+  }
+
+  async function remove() {
+    if (!window.confirm("Supprimer définitivement cette tâche ?")) return;
+    setBusy(true);
+    const res = await fetch(`/api/equipe/taches/${task.id}`, { method: "DELETE" });
+    setBusy(false);
+    if (res.ok) router.push("/dashboard/equipe");
+    else alert("Erreur");
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {task.status === "TODO" && canTransition && (
+        <Button onClick={() => transition("IN_PROGRESS")} disabled={busy}>▶ Démarrer</Button>
+      )}
+      {task.status === "IN_PROGRESS" && canTransition && (
+        <>
+          <Button variant="outline" onClick={() => transition("BLOCKED", true)} disabled={busy}>⏸ Bloquer</Button>
+          <Button onClick={() => transition("DONE")} disabled={busy}>✓ Terminer</Button>
+        </>
+      )}
+      {task.status === "BLOCKED" && canTransition && (
+        <Button onClick={() => transition("IN_PROGRESS")} disabled={busy}>▶ Reprendre</Button>
+      )}
+      {canEdit && task.status !== "DONE" && task.status !== "CANCELLED" && (
+        <Button variant="outline" onClick={() => transition("CANCELLED", true)} disabled={busy}>✕ Annuler</Button>
+      )}
+      {canEdit && members.length > 0 && (
+        <div className="flex items-center gap-1 ml-auto">
+          <select className="border rounded px-2 py-1 text-sm" value={reassignTo} onChange={(e) => setReassignTo(e.target.value)}>
+            <option value="">Réassigner à…</option>
+            {members.filter((m) => m.id !== task.assigneeId).map((m) => (
+              <option key={m.id} value={m.id}>{m.name ?? m.id}</option>
+            ))}
+          </select>
+          <Button variant="outline" size="sm" onClick={reassign} disabled={!reassignTo || busy}>OK</Button>
+        </div>
+      )}
+      {canDelete && (
+        <Button variant="destructive" size="sm" onClick={remove} disabled={busy}>🗑 Supprimer</Button>
+      )}
+    </div>
+  );
+}
+```
 
 - [ ] **Step 3: Create `components/equipe/SessionsEditor.tsx`** (Client)
 
-Table: per row, inputs for `startedAt`, `endedAt` (datetime-local), reason. Disabled if `editLockedAt < now()` AND user is the session owner. "Sauvegarder" button PATCHes `/api/equipe/taches/{id}/timer/sessions/{sessionId}`. Show audit history collapsed beside.
+```tsx
+"use client";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+
+interface SessionEdit {
+  id: string;
+  oldDurationSec: number | null;
+  newDurationSec: number | null;
+  reason: string | null;
+  editedAt: string;
+  editedBy: { id: string; name: string | null };
+}
+
+interface Session {
+  id: string;
+  userId: string;
+  startedAt: string;
+  endedAt: string | null;
+  durationSeconds: number | null;
+  isEdited: boolean;
+  editLockedAt: string | null;
+  edits: SessionEdit[];
+}
+
+interface Props {
+  taskId: string;
+  sessions: Session[];
+}
+
+function toLocalDT(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function fmtHM(seconds: number | null): string {
+  if (seconds == null) return "—";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return h > 0 ? `${h}h${String(m).padStart(2, "0")}` : `${m} min`;
+}
+
+export function SessionsEditor({ taskId, sessions }: Props) {
+  const router = useRouter();
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  if (sessions.length === 0) {
+    return <p className="text-sm text-slate-500">Aucune session enregistrée.</p>;
+  }
+
+  async function save(sessionId: string, form: HTMLFormElement) {
+    setBusy(true);
+    const fd = new FormData(form);
+    const body: Record<string, unknown> = {};
+    const startedAt = String(fd.get("startedAt") ?? "");
+    const endedAt = String(fd.get("endedAt") ?? "");
+    const reason = String(fd.get("reason") ?? "").trim();
+    if (startedAt) body.newStartedAt = new Date(startedAt).toISOString();
+    if (endedAt) body.newEndedAt = new Date(endedAt).toISOString();
+    if (reason) body.reason = reason;
+
+    const res = await fetch(`/api/equipe/taches/${taskId}/timer/sessions/${sessionId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    setBusy(false);
+    if (res.ok) {
+      setEditingId(null);
+      router.refresh();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error ?? "Erreur");
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      {sessions.map((s) => {
+        const locked = s.editLockedAt ? new Date(s.editLockedAt) < new Date() : false;
+        const editing = editingId === s.id;
+        return (
+          <div key={s.id} className="rounded border p-3">
+            <div className="flex items-start justify-between gap-2">
+              <div className="text-sm">
+                <div>
+                  ⏱ {new Date(s.startedAt).toLocaleString("fr-FR")} →{" "}
+                  {s.endedAt ? new Date(s.endedAt).toLocaleString("fr-FR") : <em>en cours</em>}
+                </div>
+                <div className="text-slate-500">Durée : {fmtHM(s.durationSeconds)}{s.isEdited && <span className="ml-2 text-blue-600">✏ éditée</span>}</div>
+              </div>
+              {!editing && s.endedAt && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={locked}
+                  onClick={() => setEditingId(s.id)}
+                  title={locked ? "Verrouillée — contactez votre manager" : ""}
+                >
+                  Éditer
+                </Button>
+              )}
+            </div>
+
+            {editing && s.endedAt && (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  save(s.id, e.currentTarget);
+                }}
+                className="mt-2 space-y-2"
+              >
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="text-xs">
+                    Début
+                    <input
+                      type="datetime-local"
+                      name="startedAt"
+                      defaultValue={toLocalDT(s.startedAt)}
+                      className="w-full border rounded px-2 py-1"
+                    />
+                  </label>
+                  <label className="text-xs">
+                    Fin
+                    <input
+                      type="datetime-local"
+                      name="endedAt"
+                      defaultValue={toLocalDT(s.endedAt)}
+                      className="w-full border rounded px-2 py-1"
+                    />
+                  </label>
+                </div>
+                <label className="text-xs block">
+                  Raison
+                  <input name="reason" maxLength={500} className="w-full border rounded px-2 py-1" />
+                </label>
+                <div className="flex gap-2">
+                  <Button type="submit" size="sm" disabled={busy}>Sauvegarder</Button>
+                  <Button type="button" size="sm" variant="outline" onClick={() => setEditingId(null)}>Annuler</Button>
+                </div>
+              </form>
+            )}
+
+            {s.edits.length > 0 && (
+              <details className="mt-2 text-xs">
+                <summary className="cursor-pointer text-slate-500">Historique d'édition ({s.edits.length})</summary>
+                <ul className="mt-1 space-y-1">
+                  {s.edits.map((ed) => (
+                    <li key={ed.id}>
+                      {new Date(ed.editedAt).toLocaleString("fr-FR")} — {ed.editedBy.name ?? "—"} :{" "}
+                      {fmtHM(ed.oldDurationSec)} → {fmtHM(ed.newDurationSec)}
+                      {ed.reason && <em className="ml-1">({ed.reason})</em>}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+```
 
 - [ ] **Step 4: Commit**
 
@@ -3899,11 +4692,76 @@ git commit -m "feat(equipe): add task detail page with actions, timeline, sessio
 **Files:**
 - Create: `app/dashboard/equipe/comment-ca-marche/page.tsx` (Server — static markdown rendered via Tailwind prose)
 
-- [ ] **Step 1: Create the page** with sections: "Quelles données sont collectées", "Qui voit quoi", "Combien de temps les données sont conservées" (durée illimitée tant que le compte existe — V2 RGPD à raffiner), "Comment éditer une session", "Comment fonctionnent les anomalies".
+- [ ] **Step 1: Create `app/dashboard/equipe/comment-ca-marche/page.tsx`**
 
-Use plain JSX with Tailwind `prose` class.
+```tsx
+export default function HowItWorksPage() {
+  return (
+    <article className="prose prose-slate max-w-3xl">
+      <h1>Comment fonctionne le module Équipe</h1>
 
-- [ ] **Step 2: Add a footer link "ℹ Comment fonctionne ce module"** in the layout file `app/dashboard/equipe/page.tsx` (and the manager + detail pages) pointing to this page.
+      <h2>Quelles données sont collectées</h2>
+      <ul>
+        <li>Les <strong>tâches</strong> que vous créez ou qui vous sont assignées (titre, description, échéance, priorité, estimation).</li>
+        <li>Les <strong>changements de statut</strong> (TODO → En cours → Bloquée → Terminée), avec horodatage et auteur.</li>
+        <li>Les <strong>sessions de timer</strong> liées à vos passages en "En cours" : début, fin, durée.</li>
+        <li>L'<strong>historique d'édition</strong> de chaque session (qui a modifié quoi, quand, et pourquoi).</li>
+      </ul>
+
+      <h2>Qui voit quoi</h2>
+      <ul>
+        <li><strong>Vous</strong> : toutes vos tâches, vos sessions, vos métriques personnelles.</li>
+        <li><strong>Votre manager</strong> (par équipe) : les tâches et métriques des membres de son équipe.</li>
+        <li><strong>OWNER / ADMIN de l'organisation</strong> : tout, dans toutes les équipes.</li>
+        <li><strong>Vos collègues</strong> : ne voient ni vos tâches ni vos métriques individuelles.</li>
+      </ul>
+
+      <h2>Comment éditer une session de timer</h2>
+      <p>
+        Si vous avez oublié de stopper le timer ou que la durée enregistrée est incorrecte, ouvrez la tâche concernée et cliquez sur <em>Éditer</em> à côté de la session.
+        Vous pouvez modifier votre session dans les <strong>24 h suivant sa clôture</strong>.
+        Au-delà, seul votre manager ou un admin peut intervenir — en laissant une trace dans l'historique d'édition.
+      </p>
+
+      <h2>Comment fonctionnent les anomalies</h2>
+      <p>
+        Le système signale automatiquement à votre manager certaines situations qui peuvent demander une discussion :
+      </p>
+      <ul>
+        <li>Tâche en retard par rapport à son échéance</li>
+        <li>Tâche bloquée depuis plus de 48 h</li>
+        <li>Plus de 5 tâches en cours sur un membre</li>
+        <li>Écart inhabituel entre le temps en "En cours" et le temps réellement tracké (peut indiquer une session non clôturée)</li>
+        <li>Plus de 50 % du cycle de la tâche passé en "Bloquée" (cause externe à investiguer)</li>
+      </ul>
+      <p>Ces signalements sont des <strong>flags neutres</strong>, jamais des accusations.</p>
+
+      <h2>Combien de temps les données sont conservées</h2>
+      <p>
+        Tant que votre compte est actif, les données du module sont conservées sans limite de durée.
+        Pour exercer vos droits (accès, suppression), contactez l'administrateur de votre organisation.
+      </p>
+
+      <h2>Pas de classement</h2>
+      <p>
+        Aucune vue ne montre de classement public des membres. Les métriques servent à <strong>débloquer le travail</strong>, pas à comparer ou sanctionner.
+      </p>
+    </article>
+  );
+}
+```
+
+- [ ] **Step 2: Add a footer link "ℹ Comment fonctionne ce module"** in `app/dashboard/equipe/page.tsx`, `app/dashboard/equipe/manager/page.tsx`, and `app/dashboard/equipe/taches/[id]/page.tsx`. Add this snippet at the bottom of each page's JSX:
+
+```tsx
+<footer className="pt-6 mt-6 border-t text-xs text-slate-500">
+  <Link href="/dashboard/equipe/comment-ca-marche" className="hover:underline">
+    ℹ Comment fonctionne ce module
+  </Link>
+</footer>
+```
+
+(Add `import Link from "next/link";` to each page if not already imported.)
 
 - [ ] **Step 3: Commit**
 
@@ -3924,11 +4782,92 @@ git commit -m "feat(equipe): add transparency page documenting data and visibili
 
 - [ ] **Step 1: Create `components/equipe/NotificationsBell.tsx`** (Client)
 
-Polls `/api/equipe/notifications?unread=1` every 60s. Shows bell icon with badge if `unreadCount > 0`. On click: dropdown lists notifications, click marks as read via POST `/api/equipe/notifications/[id]/read` and navigates to `/dashboard/equipe/taches/{taskId}`.
+```tsx
+"use client";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Bell } from "lucide-react";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuTrigger, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+
+interface Notification {
+  id: string;
+  type: "TASK_ASSIGNED" | "TASK_OVERDUE" | "TASK_BLOCKED_LONG" | "TASK_ANOMALY";
+  message: string;
+  readAt: string | null;
+  createdAt: string;
+  task: { id: string; title: string };
+}
+
+export function NotificationsBell() {
+  const router = useRouter();
+  const [items, setItems] = useState<Notification[]>([]);
+  const [unread, setUnread] = useState(0);
+
+  async function load() {
+    const r = await fetch("/api/equipe/notifications");
+    if (!r.ok) return;
+    const data: { notifications: Notification[]; unreadCount: number } = await r.json();
+    setItems(data.notifications);
+    setUnread(data.unreadCount);
+  }
+
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 60000);
+    return () => clearInterval(t);
+  }, []);
+
+  async function open(n: Notification) {
+    if (!n.readAt) {
+      await fetch(`/api/equipe/notifications/${n.id}/read`, { method: "POST" });
+      setItems((prev) => prev.map((x) => (x.id === n.id ? { ...x, readAt: new Date().toISOString() } : x)));
+      setUnread((u) => Math.max(0, u - 1));
+    }
+    router.push(`/dashboard/equipe/taches/${n.task.id}`);
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger className="relative inline-flex items-center justify-center rounded-md p-2 hover:bg-slate-100">
+        <Bell className="h-5 w-5" />
+        {unread > 0 && (
+          <span className="absolute -top-0.5 -right-0.5 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-medium text-white">
+            {unread > 9 ? "9+" : unread}
+          </span>
+        )}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-80">
+        <DropdownMenuLabel>Notifications</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {items.length === 0 ? (
+          <div className="px-2 py-4 text-sm text-slate-500 text-center">Aucune notification</div>
+        ) : (
+          items.slice(0, 20).map((n) => (
+            <DropdownMenuItem key={n.id} onClick={() => open(n)} className={!n.readAt ? "font-medium" : ""}>
+              <div className="flex flex-col">
+                <span className="text-sm truncate">{n.message}</span>
+                <span className="text-xs text-slate-500">{new Date(n.createdAt).toLocaleString("fr-FR")}</span>
+              </div>
+            </DropdownMenuItem>
+          ))
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+```
 
 - [ ] **Step 2: Mount in topbar**
 
-Add `<NotificationsBell />` next to the user avatar in `components/dashboard/topbar.tsx`.
+In `components/dashboard/topbar.tsx`, add the import and place `<NotificationsBell />` just before the user avatar block:
+
+```tsx
+import { NotificationsBell } from "@/components/equipe/NotificationsBell";
+// …
+<NotificationsBell />
+```
 
 - [ ] **Step 3: Commit**
 

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { getTenantContext } from "@/lib/tenant";
@@ -41,6 +42,11 @@ export default async function EquipePage({ searchParams }: { searchParams: Promi
           tasks.map((t) => <TaskCard key={t.id} task={{ ...t, estimatedHours: t.estimatedHours ? Number(t.estimatedHours) : null }} />)
         )}
       </div>
+      <footer className="pt-6 mt-6 border-t text-xs text-slate-500">
+        <Link href="/dashboard/equipe/comment-ca-marche" className="hover:underline">
+          ℹ Comment fonctionne ce module
+        </Link>
+      </footer>
     </div>
   );
 }

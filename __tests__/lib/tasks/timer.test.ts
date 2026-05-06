@@ -101,4 +101,54 @@ describe("editTimerSession", () => {
       })
     ).resolves.toBeUndefined();
   });
+
+  it("allows assignee to edit an active (in-progress) session — no window applies", async () => {
+    const { db } = await import("@/lib/db");
+    const tx = (db as any)._tx;
+    const startedAt = new Date(Date.now() - 1000 * 60 * 30);
+    tx.timerSession.findFirst.mockResolvedValue({
+      id: "sess1", userId: "u1", taskId: "task1",
+      startedAt, endedAt: null, durationSeconds: null,
+      editLockedAt: null,
+    });
+
+    const ctx = {
+      userId: "u1", orgId: "org1", orgRole: "MEMBER" as const,
+      teamRoles: new Map<string, "MANAGER" | "MEMBER">([["team1", "MEMBER"]]),
+    };
+    const task = {
+      id: "task1", organizationId: "org1", teamId: "team1",
+      assigneeId: "u1", status: "IN_PROGRESS" as const,
+    };
+
+    await expect(
+      editTimerSession(ctx, "sess1", task as any, {
+        newStartedAt: new Date(Date.now() - 1000 * 60 * 15),
+        reason: "started later than I thought",
+      })
+    ).resolves.toBeUndefined();
+  });
+
+  it("rejects edit from a different organization (cross-tenant)", async () => {
+    const { db } = await import("@/lib/db");
+    const tx = (db as any)._tx;
+    tx.timerSession.findFirst.mockResolvedValue({
+      id: "sess1", userId: "u1", taskId: "task1",
+      startedAt: new Date(), endedAt: new Date(),
+      editLockedAt: new Date(Date.now() + 1000 * 60 * 60),
+    });
+
+    const crossOrgCtx = {
+      userId: "intruder", orgId: "org2", orgRole: "OWNER" as const,
+      teamRoles: new Map<string, "MANAGER" | "MEMBER">(),
+    };
+    const task = {
+      id: "task1", organizationId: "org1", teamId: "team1",
+      assigneeId: "u1", status: "DONE" as const,
+    };
+
+    await expect(
+      editTimerSession(crossOrgCtx, "sess1", task as any, { reason: "cross-org" })
+    ).rejects.toThrow(/permission|forbidden/i);
+  });
 });

@@ -27,6 +27,10 @@ export async function editTimerSession(
     });
     if (!session) throw new TimerError("NOT_FOUND", "Session introuvable");
 
+    if (ctx.orgId !== task.organizationId) {
+      throw new TimerError("FORBIDDEN", "Permission refusée");
+    }
+
     const isManager = ctx.teamRoles.get(task.teamId) === "MANAGER";
     const isAdmin = ctx.orgRole === "OWNER" || ctx.orgRole === "ADMIN";
     const isOwnerOfSession = session.userId === ctx.userId;
@@ -34,8 +38,11 @@ export async function editTimerSession(
     if (!isManager && !isAdmin && !isOwnerOfSession) {
       throw new TimerError("FORBIDDEN", "Permission refusée");
     }
-    if (!isManager && !isAdmin && session.editLockedAt && new Date() > session.editLockedAt) {
-      throw new TimerError("EDIT_WINDOW_EXPIRED", "Edit window de 24h dépassée");
+    if (!isManager && !isAdmin && session.endedAt) {
+      // Session has ended — 24h window applies to non-manager/admin assignees.
+      if (session.editLockedAt && new Date() > session.editLockedAt) {
+        throw new TimerError("EDIT_WINDOW_EXPIRED", "Fenêtre d'édition (24h window) dépassée");
+      }
     }
 
     const newStarted = payload.newStartedAt ?? session.startedAt;

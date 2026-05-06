@@ -6,10 +6,12 @@ import { TaskCard } from "@/components/equipe/TaskCard";
 import { CollabMetrics } from "@/components/equipe/CollabMetrics";
 import { TaskFilters } from "@/components/equipe/TaskFilters";
 import { NewTaskButton } from "@/components/equipe/NewTaskButton";
+import { EquipeNavTabs } from "@/components/equipe/EquipeNavTabs";
 
 export default async function EquipePage({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
   const ctx = await getTenantContext();
   if (!ctx) redirect("/auth/login");
+  if (ctx.orgRole === "VIEWER") redirect("/dashboard");
 
   const sp = await searchParams;
   const status = sp.status;
@@ -29,6 +31,7 @@ export default async function EquipePage({ searchParams }: { searchParams: Promi
 
   return (
     <div className="space-y-6">
+      <EquipeNavTabs ctx={ctx} current="mine" />
       <header className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Mes tâches</h1>
         {canCreate && <NewTaskButton userId={ctx.userId} />}

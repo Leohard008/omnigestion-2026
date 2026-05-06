@@ -4,10 +4,12 @@ import { db } from "@/lib/db";
 import { getTenantContext } from "@/lib/tenant";
 import { canManageTeam } from "@/lib/tasks/permissions";
 import { TeamForm } from "@/components/equipe/TeamForm";
+import { EquipeNavTabs } from "@/components/equipe/EquipeNavTabs";
 
 export default async function TeamsAdminPage() {
   const ctx = await getTenantContext();
   if (!ctx) redirect("/auth/login");
+  if (ctx.orgRole === "VIEWER") redirect("/dashboard");
   if (!canManageTeam(ctx)) redirect("/dashboard/equipe");
 
   const teams = await db.team.findMany({
@@ -18,6 +20,7 @@ export default async function TeamsAdminPage() {
 
   return (
     <div className="space-y-6">
+      <EquipeNavTabs ctx={ctx} current="teams" />
       <header>
         <h1 className="text-2xl font-semibold">Équipes</h1>
         <p className="text-sm text-slate-500">Créer et organiser les équipes de votre organisation.</p>

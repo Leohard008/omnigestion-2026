@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 export default async function TaskDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const ctx = await getTenantContext();
   if (!ctx) redirect("/auth/login");
+  if (ctx.orgRole === "VIEWER") redirect("/dashboard");
   const { id } = await params;
 
   const task = await db.task.findFirst({

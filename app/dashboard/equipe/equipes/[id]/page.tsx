@@ -7,6 +7,7 @@ import { TeamMembersList } from "@/components/equipe/TeamMembersList";
 export default async function TeamDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const ctx = await getTenantContext();
   if (!ctx) redirect("/auth/login");
+  if (ctx.orgRole === "VIEWER") redirect("/dashboard");
   const { id } = await params;
 
   const team = await db.team.findFirst({

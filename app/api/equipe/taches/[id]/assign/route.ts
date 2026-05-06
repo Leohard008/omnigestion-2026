@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { getTenantContext } from "@/lib/tenant";
 import { canReassignTask } from "@/lib/tasks/permissions";
 import { invalidateTeamMetrics } from "@/lib/tasks/cache";
+import { TIMER_EDIT_WINDOW_HOURS } from "@/lib/tasks/constants";
 
 const schema = z.object({
   toAssigneeId: z.string().min(1),
@@ -35,6 +36,24 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   }
 
   await db.$transaction(async (tx) => {
+    // Close any active timer of the previous assignee on this task
+    // — they no longer own the task so their session must end.
+    const orphanSession = await tx.timerSession.findFirst({
+      where: { taskId: task.id, userId: task.assigneeId, endedAt: null },
+    });
+    if (orphanSession) {
+      const ended = new Date();
+      const dur = Math.floor((ended.getTime() - orphanSession.startedAt.getTime()) / 1000);
+      await tx.timerSession.update({
+        where: { id: orphanSession.id },
+        data: {
+          endedAt: ended,
+          durationSeconds: dur,
+          editLockedAt: new Date(ended.getTime() + TIMER_EDIT_WINDOW_HOURS * 3600 * 1000),
+        },
+      });
+    }
+
     await tx.taskEvent.create({
       data: {
         taskId: task.id,

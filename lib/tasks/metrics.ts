@@ -1,9 +1,6 @@
 import { db } from "@/lib/db";
 import type { Period, MemberMetrics, TeamMetrics, AnomalyFlag } from "@/lib/tasks/types";
-import { PERIOD_TO_DAYS, WIP_ALERT_THRESHOLD } from "@/lib/tasks/constants";
-
-// WIP_ALERT_THRESHOLD is referenced by the cron job in Phase 7.
-void WIP_ALERT_THRESHOLD;
+import { PERIOD_TO_DAYS } from "@/lib/tasks/constants";
 
 export function computeP50(values: number[]): number | null {
   if (values.length === 0) return null;

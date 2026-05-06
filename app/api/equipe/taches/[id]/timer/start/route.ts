@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getTenantContext } from "@/lib/tenant";
 import { transitionStatus, TransitionError } from "@/lib/tasks/transitions";
-import { redis } from "@/lib/redis";
+import { invalidateTeamMetrics } from "@/lib/tasks/cache";
 
 export async function POST(_: Request, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await getTenantContext();
@@ -22,6 +22,6 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
     throw e;
   }
 
-  await redis.del(`metrics:org:${ctx.orgId}:team:${task.teamId}`);
+  await invalidateTeamMetrics(ctx.orgId, task.teamId);
   return NextResponse.json({ ok: true });
 }

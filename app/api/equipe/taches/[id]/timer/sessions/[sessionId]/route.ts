@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { getTenantContext } from "@/lib/tenant";
 import { editTimerSession, TimerError } from "@/lib/tasks/timer";
-import { redis } from "@/lib/redis";
+import { invalidateTeamMetrics } from "@/lib/tasks/cache";
 
 const schema = z.object({
   newStartedAt: z.string().datetime().optional(),
@@ -39,6 +39,6 @@ export async function PATCH(
     throw e;
   }
 
-  await redis.del(`metrics:org:${ctx.orgId}:team:${task.teamId}`);
+  await invalidateTeamMetrics(ctx.orgId, task.teamId);
   return NextResponse.json({ ok: true });
 }

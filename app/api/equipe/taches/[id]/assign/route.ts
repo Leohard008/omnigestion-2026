@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { getTenantContext } from "@/lib/tenant";
 import { canReassignTask } from "@/lib/tasks/permissions";
-import { redis } from "@/lib/redis";
+import { invalidateTeamMetrics } from "@/lib/tasks/cache";
 
 const schema = z.object({
   toAssigneeId: z.string().min(1),
@@ -56,6 +56,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     });
   });
 
-  await redis.del(`metrics:org:${ctx.orgId}:team:${task.teamId}`);
+  await invalidateTeamMetrics(ctx.orgId, task.teamId);
   return NextResponse.json({ ok: true });
 }

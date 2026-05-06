@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { getTenantContext } from "@/lib/tenant";
 import { transitionStatus, TransitionError } from "@/lib/tasks/transitions";
-import { redis } from "@/lib/redis";
+import { invalidateTeamMetrics } from "@/lib/tasks/cache";
 
 const schema = z.object({
   toStatus: z.enum(["TODO", "IN_PROGRESS", "BLOCKED", "DONE", "CANCELLED"]),
@@ -32,6 +32,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     throw e;
   }
 
-  await redis.del(`metrics:org:${ctx.orgId}:team:${task.teamId}`);
+  await invalidateTeamMetrics(ctx.orgId, task.teamId);
   return NextResponse.json({ ok: true });
 }

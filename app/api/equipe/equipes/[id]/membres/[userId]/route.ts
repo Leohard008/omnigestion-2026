@@ -57,7 +57,12 @@ export async function DELETE(
 
   // Refuse if user has active tasks assigned in this team.
   const activeTasks = await db.task.count({
-    where: { teamId: id, assigneeId: userId, status: { in: ["TODO", "IN_PROGRESS", "BLOCKED"] } },
+    where: {
+      teamId: id,
+      assigneeId: userId,
+      organizationId: ctx.orgId,
+      status: { in: ["TODO", "IN_PROGRESS", "BLOCKED"] },
+    },
   });
   if (activeTasks > 0) {
     return NextResponse.json(

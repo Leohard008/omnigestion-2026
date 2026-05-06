@@ -25,18 +25,26 @@ export async function GET(request: Request) {
 
   const where: any = { organizationId: ctx.orgId };
   if (status) where.status = status;
-  if (teamId) where.teamId = teamId;
 
   if (scope === "mine") {
     where.assigneeId = ctx.userId;
+    if (teamId) where.teamId = teamId;
   } else if (scope === "team") {
-    // Tasks in teams where ctx is manager or member.
     const myTeams = Array.from(ctx.teamRoles.keys());
-    where.teamId = { in: myTeams };
+    if (teamId) {
+      // Narrow to that specific team only if user belongs to it.
+      if (!myTeams.includes(teamId)) {
+        return NextResponse.json([], { status: 200 });
+      }
+      where.teamId = teamId;
+    } else {
+      where.teamId = { in: myTeams };
+    }
   } else if (scope === "all") {
     if (ctx.orgRole !== "OWNER" && ctx.orgRole !== "ADMIN") {
       return NextResponse.json({ error: "Interdit" }, { status: 403 });
     }
+    if (teamId) where.teamId = teamId;
   }
 
   const tasks = await db.task.findMany({

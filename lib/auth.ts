@@ -45,9 +45,27 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   ],
   callbacks: {
     async jwt({ token, user }) {
+      // Initial sign-in: capture user id and issued-at timestamp
       if (user) {
         token.id = user.id;
+        token.iat = Math.floor(Date.now() / 1000);
       }
+
+      // On every call, check if the user's password was changed after this JWT was issued
+      if (token.id && token.iat) {
+        const dbUser = await db.user.findUnique({
+          where: { id: token.id as string },
+          select: { passwordChangedAt: true },
+        });
+        if (dbUser?.passwordChangedAt) {
+          const changedTs = Math.floor(dbUser.passwordChangedAt.getTime() / 1000);
+          if (changedTs > (token.iat as number)) {
+            // Password was changed after this JWT was issued → invalidate it
+            return null;
+          }
+        }
+      }
+
       return token;
     },
     async session({ session, token }) {

@@ -1,7 +1,7 @@
 import type { TaskStatus } from "@prisma/client";
 import type { TenantContext, TaskRef, SessionRef } from "@/lib/tasks/types";
 
-const ALLOWED_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
+export const ALLOWED_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
   TODO: ["IN_PROGRESS", "CANCELLED"],
   IN_PROGRESS: ["BLOCKED", "DONE", "CANCELLED"],
   BLOCKED: ["IN_PROGRESS", "CANCELLED"],

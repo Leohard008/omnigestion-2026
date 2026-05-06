@@ -1,12 +1,12 @@
 import { db } from "@/lib/db";
 import type { TaskStatus, Prisma } from "@prisma/client";
 import type { TenantContext, TaskRef } from "@/lib/tasks/types";
-import { canTransitionStatus } from "@/lib/tasks/permissions";
+import { canTransitionStatus, ALLOWED_TRANSITIONS } from "@/lib/tasks/permissions";
 import { TIMER_EDIT_WINDOW_HOURS } from "@/lib/tasks/constants";
 
 export class TransitionError extends Error {
-  code: "FORBIDDEN" | "INVALID_TRANSITION" | "NOT_FOUND";
-  constructor(code: "FORBIDDEN" | "INVALID_TRANSITION" | "NOT_FOUND", message: string) {
+  code: "FORBIDDEN" | "INVALID_TRANSITION";
+  constructor(code: "FORBIDDEN" | "INVALID_TRANSITION", message: string) {
     super(message);
     this.code = code;
   }
@@ -20,14 +20,7 @@ export async function transitionStatus(
 ): Promise<void> {
   if (!canTransitionStatus(ctx, task, task.status, toStatus)) {
     // Distinguish invalid transition vs forbidden role.
-    const ALLOWED: Record<TaskStatus, TaskStatus[]> = {
-      TODO: ["IN_PROGRESS", "CANCELLED"],
-      IN_PROGRESS: ["BLOCKED", "DONE", "CANCELLED"],
-      BLOCKED: ["IN_PROGRESS", "CANCELLED"],
-      DONE: [],
-      CANCELLED: [],
-    };
-    if (!ALLOWED[task.status].includes(toStatus)) {
+    if (!ALLOWED_TRANSITIONS[task.status].includes(toStatus)) {
       throw new TransitionError("INVALID_TRANSITION", `Cannot transition ${task.status} → ${toStatus}`);
     }
     throw new TransitionError("FORBIDDEN", "Insufficient permissions for transition");

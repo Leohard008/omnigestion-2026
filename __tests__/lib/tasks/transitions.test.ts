@@ -78,9 +78,12 @@ describe("transitionStatus", () => {
   it("stops other active timer when starting a new task", async () => {
     const { db } = await import("@/lib/db");
     const tx = (db as any)._tx;
-    tx.timerSession.findFirst.mockResolvedValue({
-      id: "sess-other", taskId: "tOther", userId: "u1", startedAt: new Date(Date.now() - 1000 * 60 * 30),
-    });
+    tx.timerSession.findFirst
+      .mockResolvedValueOnce({
+        id: "sess-other", taskId: "tOther", userId: "u1",
+        startedAt: new Date(Date.now() - 1000 * 60 * 30),
+      })
+      .mockResolvedValueOnce(null);
 
     const ctx = {
       userId: "u1", orgId: "org1", orgRole: "MEMBER" as const,
@@ -97,6 +100,11 @@ describe("transitionStatus", () => {
       expect.objectContaining({
         where: { id: "sess-other" },
         data: expect.objectContaining({ endedAt: expect.any(Date), durationSeconds: expect.any(Number) }),
+      })
+    );
+    expect(tx.timerSession.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ userId: "u1", taskId: "t1" }),
       })
     );
   });
@@ -154,5 +162,54 @@ describe("transitionStatus", () => {
       where: { id: "t1" },
       data: expect.objectContaining({ status: "DONE", completedAt: expect.any(Date) }),
     });
+  });
+
+  it("closes active timer on IN_PROGRESS → DONE", async () => {
+    const { db } = await import("@/lib/db");
+    const tx = (db as any)._tx;
+    const startedAt = new Date(Date.now() - 1000 * 60 * 60);
+    tx.timerSession.findFirst.mockResolvedValue({
+      id: "sess1", taskId: "t1", userId: "u1", startedAt,
+    });
+
+    const ctx = {
+      userId: "u1", orgId: "org1", orgRole: "MEMBER" as const,
+      teamRoles: new Map<string, "MANAGER" | "MEMBER">([["team1", "MEMBER"]]),
+    };
+    const task = {
+      id: "t1", organizationId: "org1", teamId: "team1",
+      assigneeId: "u1", status: "IN_PROGRESS" as const,
+      startedAt, completedAt: null,
+    };
+
+    await transitionStatus(ctx, task as any, "DONE");
+
+    expect(tx.timerSession.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "sess1" },
+        data: expect.objectContaining({ endedAt: expect.any(Date), durationSeconds: expect.any(Number) }),
+      })
+    );
+  });
+
+  it("does not create timer if user is not the assignee", async () => {
+    const { db } = await import("@/lib/db");
+    const tx = (db as any)._tx;
+    tx.timerSession.findFirst.mockResolvedValue(null);
+
+    // Manager (not assignee) starts the task on behalf of someone.
+    const ctx = {
+      userId: "mgr1", orgId: "org1", orgRole: "MEMBER" as const,
+      teamRoles: new Map<string, "MANAGER" | "MEMBER">([["team1", "MANAGER"]]),
+    };
+    const task = {
+      id: "t1", organizationId: "org1", teamId: "team1",
+      assigneeId: "u1", status: "TODO" as const,  // assignee is u1, not mgr1
+      startedAt: null, completedAt: null,
+    };
+
+    await transitionStatus(ctx, task as any, "IN_PROGRESS");
+
+    expect(tx.timerSession.create).not.toHaveBeenCalled();
   });
 });

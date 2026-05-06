@@ -80,9 +80,13 @@ export async function editTimerSession(
   });
 }
 
-export async function getActiveTimerForUser(userId: string) {
+export async function getActiveTimerForUser(userId: string, orgId: string) {
   return db.timerSession.findFirst({
-    where: { userId, endedAt: null },
+    where: {
+      userId,
+      endedAt: null,
+      task: { organizationId: orgId },
+    },
     include: {
       task: { select: { id: true, title: true, teamId: true } },
     },

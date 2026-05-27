@@ -6,7 +6,7 @@ export default auth((req) => {
   const isAuthenticated = !!req.auth;
 
   // Public routes
-  const publicRoutes = ["/", "/auth/login", "/auth/register", "/auth/error"];
+  const publicRoutes = ["/", "/auth/login", "/auth/register", "/auth/error", "/auth/forgot-password", "/auth/reset-password"];
   const isPublicRoute = publicRoutes.some((route) => pathname === route || pathname.startsWith("/api/auth"));
 
   if (!isAuthenticated && !isPublicRoute) {

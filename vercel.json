@@ -1,0 +1,5 @@
+{
+  "crons": [
+    { "path": "/api/cron/equipe-anomalies", "schedule": "0 * * * *" }
+  ]
+}

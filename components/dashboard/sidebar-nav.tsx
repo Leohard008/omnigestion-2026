@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { LayoutDashboard, Users, Package, FileText, FileCheck, Receipt, Settings } from "lucide-react";
+import { LayoutDashboard, Users, UsersRound, Package, FileText, FileCheck, Receipt, Settings } from "lucide-react";
 import type { Organization } from "@prisma/client";
 
 const navItems = [
@@ -12,6 +12,7 @@ const navItems = [
   { href: "/dashboard/factures", label: "Factures", icon: FileText },
   { href: "/dashboard/devis", label: "Devis", icon: FileCheck },
   { href: "/dashboard/depenses", label: "Dépenses", icon: Receipt },
+  { href: "/dashboard/equipe", label: "Équipe", icon: UsersRound },
   { href: "/dashboard/parametres", label: "Paramètres", icon: Settings },
 ];
 

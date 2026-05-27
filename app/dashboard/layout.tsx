@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { SidebarNav } from "@/components/dashboard/sidebar-nav";
 import { Topbar } from "@/components/dashboard/topbar";
+import { TimerWidget } from "@/components/equipe/TimerWidget";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const session = await auth();
@@ -22,6 +23,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         <Topbar user={session.user} organizationName={membership.organization.name} />
         <main className="flex-1 overflow-y-auto p-6">{children}</main>
       </div>
+      <TimerWidget />
     </div>
   );
 }
